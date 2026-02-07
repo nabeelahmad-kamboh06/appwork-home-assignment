@@ -684,7 +684,7 @@ n = 100,000: List operations ≈ 100-500μs (consider V4)
 | Benefit | Description |
 |---------|-------------|
 | **Simple API** | Just `Cache.fetch(request)` |
-| **Well-Tested** | 64 tests covering all scenarios |
+| **Well-Tested** | 84 tests covering all scenarios |
 | **Well-Documented** | Comprehensive @moduledoc and @doc |
 | **Type Specs** | Full @spec coverage for Dialyzer |
 
@@ -725,7 +725,7 @@ test/
 
 ### Test Coverage
 
-- **64 tests total**
+- **84 tests total**
 - Unit tests for Request, Response, Upstream
 - Integration tests for cache behavior (V1, V2, V3)
 - Edge case tests (unicode, special chars, large payloads)
