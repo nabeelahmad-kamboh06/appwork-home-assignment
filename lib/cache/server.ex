@@ -1,16 +1,17 @@
 defmodule Cache.Server do
   @moduledoc """
-  GenServer implementing the basic capped cache.
+  GenServer implementing the LRU cache.
 
-  Stores responses for the last CAP requests. When capacity is exceeded,
-  the oldest entry is evicted (FIFO order).
+  Stores the last CAP distinct request-response pairs. When a cached request
+  is accessed again, its recency is updated (moved to front of LRU list).
+  The least recently used entry is evicted when capacity is exceeded.
 
   ## State Structure
 
       %{
         cap: integer(),
         store: %{hash => entry},
-        order: [hash]
+        lru: [hash]               # Most recent first
       }
   """
 
@@ -62,7 +63,7 @@ defmodule Cache.Server do
     state = %{
       cap: cap,
       store: %{},
-      order: []
+      lru: []
     }
 
     {:ok, state}
@@ -77,9 +78,13 @@ defmodule Cache.Server do
 
   @impl GenServer
   def handle_call(:stats, _from, state) do
+    size = map_size(state.store)
+
     stats = %{
-      size: map_size(state.store),
-      cap: state.cap
+      size: size,
+      cap: state.cap,
+      utilization: if(state.cap > 0, do: Float.round(size / state.cap * 100, 2), else: 0.0),
+      available: state.cap - size
     }
 
     {:reply, {:ok, stats}, state}
@@ -95,10 +100,17 @@ defmodule Cache.Server do
         fetch_and_insert(request, hash, state)
 
       entry ->
-        # Cache hit - return stored response
+        # Cache hit - update recency (LRU touch)
         Logger.debug("Cache hit: #{inspect(request.url)}")
-        {{:ok, entry.response}, state}
+        new_state = touch_lru(state, hash)
+        {{:ok, entry.response}, new_state}
     end
+  end
+
+  # Move hash to front of LRU list (most recently used)
+  defp touch_lru(state, hash) do
+    new_lru = [hash | List.delete(state.lru, hash)]
+    %{state | lru: new_lru}
   end
 
   defp fetch_and_insert(request, hash, state) do
@@ -117,18 +129,18 @@ defmodule Cache.Server do
     entry = %{response: response}
 
     new_store = Map.put(state.store, hash, entry)
-    # Append to order list (FIFO: oldest at front, newest at back)
-    new_order = state.order ++ [hash]
+    # Prepend to LRU list (most recent first), deduplicate
+    new_lru = [hash | List.delete(state.lru, hash)]
 
-    new_state = %{state | store: new_store, order: new_order}
+    new_state = %{state | store: new_store, lru: new_lru}
     evict_if_needed(new_state)
   end
 
-  # Evict oldest entry (front of order list) when over capacity
-  defp evict_if_needed(%{cap: cap, order: [oldest | rest], store: store} = state)
-       when map_size(store) > cap do
-    Logger.debug("Evicting oldest entry: #{oldest}")
-    %{state | store: Map.delete(store, oldest), order: rest}
+  # Evict least recently used entry (last in LRU list) when over capacity
+  defp evict_if_needed(%{cap: cap, lru: lru, store: store} = state) when map_size(store) > cap do
+    lru_hash = List.last(lru)
+    Logger.debug("Evicting LRU entry: #{lru_hash}")
+    %{state | store: Map.delete(store, lru_hash), lru: List.delete(lru, lru_hash)}
   end
 
   defp evict_if_needed(state), do: state
